@@ -3,15 +3,26 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, ArrowRight, Camera, Check, FileText, ImagePlus, Leaf, MapPin, ShieldCheck, Sprout, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, Camera, Check, FileText, ImagePlus, Leaf, LocateFixed, MapPin, ShieldCheck, Sprout, X } from "lucide-react";
 import { useSession } from "@/components/auth/SessionProvider";
 import { submitClaim } from "@/services/claim.service";
 import { ApiError } from "@/services/api";
 import { displayName, perils, seasons } from "@/types/claim";
 
 type Errors = Record<string, string>;
+type DeviceLocation = { latitude: string; longitude: string; accuracy: number };
 const MAX_SIZE = 5 * 1024 * 1024;
 const ACCEPTED = ["image/jpeg", "image/png", "image/webp"];
+// Matches the Decimal(9, 6) claim coordinate columns.
+const coordinate = (value: number) => value.toFixed(6);
+
+function locationErrorMessage(error: GeolocationPositionError): string {
+  if (error.code === error.PERMISSION_DENIED) return "Location permission was denied. Allow location for this site in your browser settings, then try again.";
+  if (error.code === error.POSITION_UNAVAILABLE) return "Your device could not determine its location. Move to an open area and try again.";
+  if (error.code === error.TIMEOUT) return "Getting your location took too long. Please try again.";
+  return "Unable to get your location. Please try again.";
+}
+
 function Field({ name, label, error, hint, children }: { name: string; label: string; error?: string; hint?: string; children: ReactNode }) {
   return <div className="kc-field"><label htmlFor={name}>{label}</label>{children}{hint && <small id={`${name}-hint`}>{hint}</small>}{error && <span className="kc-field-error" id={`${name}-error`}>{error}</span>}</div>;
 }
@@ -27,6 +38,9 @@ export default function ClaimForm() {
   const [busy, setBusy] = useState(false);
   const [locked, setLocked] = useState(false);
   const [photoNotice, setPhotoNotice] = useState("");
+  const [location, setLocation] = useState<DeviceLocation | null>(null);
+  const [locating, setLocating] = useState(false);
+  const [locationError, setLocationError] = useState("");
   const pending = useRef<{ key: string; form: FormData } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -46,6 +60,25 @@ export default function ClaimForm() {
     setPhotos([...photos, ...added]); setErrors((errors) => ({ ...errors, photos: "" }));
   }
 
+  function requestLocation() {
+    setLocationError("");
+    if (!window.isSecureContext || !("geolocation" in navigator)) {
+      setLocationError("This browser cannot share your location here. Open the app over HTTPS in a browser that supports location.");
+      return;
+    }
+    setLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setLocation({ latitude: coordinate(position.coords.latitude), longitude: coordinate(position.coords.longitude), accuracy: Math.round(position.coords.accuracy) });
+        setErrors((errors) => ({ ...errors, latitude: "", longitude: "" }));
+        setLocating(false);
+      },
+      (error) => { setLocationError(locationErrorMessage(error)); setLocating(false); },
+      // A fresh reading only: a cached position may come from somewhere else.
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
+    );
+  }
+
   function fieldProps(name: string) { return { id: name, name, "aria-invalid": !!errors[name], "aria-describedby": errors[name] ? `${name}-error` : undefined }; }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -60,9 +93,6 @@ export default function ClaimForm() {
         if (!value) next[name] = "This field is required.";
         form.set(name, value);
       }
-      const lat = String(form.get("latitude") ?? "").trim();
-      const lng = String(form.get("longitude") ?? "").trim();
-      if (!!lat !== !!lng) { next.latitude = "Provide both coordinates, or leave both blank."; next.longitude = next.latitude; }
       if (!photos.length) next.photos = "Add at least one crop damage photo.";
       setErrors(next);
       if (Object.keys(next).length) { setError("Check the highlighted fields before submitting."); return; }
@@ -104,7 +134,14 @@ export default function ClaimForm() {
           <Field name="peril" label="Damage type *" error={errors.peril}><select {...fieldProps("peril")} defaultValue="" required><option value="" disabled>Select damage type</option>{perils.map((peril) => <option key={peril} value={peril}>{displayName(peril)}</option>)}</select></Field>
           <Field name="event_date" label="Date of incident *" error={errors.event_date}><input {...fieldProps("event_date")} type="date" required /></Field>
         </div><div className="kc-field form-description"><label htmlFor="description">What happened? <span>(optional)</span></label><textarea {...fieldProps("description")} rows={4} maxLength={2000} placeholder="Describe what you observed in your field…" /><small>Up to 2,000 characters.</small>{errors.description && <span className="kc-field-error" id="description-error">{errors.description}</span>}</div></section>
-        <section className="kc-card form-section"><div className="form-section-title"><span>03</span><div><h2>Field location <small>Optional</small></h2><p>Add both coordinates if you know your field’s location.</p></div><MapPin size={21} /></div><div className="kc-field-grid"><Field name="latitude" label="Latitude" error={errors.latitude}><input {...fieldProps("latitude")} type="number" min={-90} max={90} step="any" placeholder="e.g. 30.9000" /></Field><Field name="longitude" label="Longitude" error={errors.longitude}><input {...fieldProps("longitude")} type="number" min={-180} max={180} step="any" placeholder="e.g. 75.8500" /></Field></div></section>
+        <section className="kc-card form-section"><div className="form-section-title"><span>03</span><div><h2>Field location <small>Optional</small></h2><p>Stand in your field and share your device’s current location.</p></div><MapPin size={21} /></div>
+          {location ? <>
+            <input type="hidden" name="latitude" value={location.latitude} />
+            <input type="hidden" name="longitude" value={location.longitude} />
+            <div className="kc-alert kc-alert-success" role="status"><Check size={16} /><div><p><strong>Location captured</strong> {location.latitude}, {location.longitude} (accurate to about ±{location.accuracy} m)</p><button type="button" className="kc-button kc-button-secondary kc-button-small" onClick={requestLocation} disabled={locating}>{locating ? "Updating location…" : "Update"}</button> <button type="button" className="kc-button kc-button-secondary kc-button-small" onClick={() => { setLocation(null); setLocationError(""); }} disabled={locating}>Remove</button></div></div>
+          </> : <button type="button" className="photo-picker" onClick={requestLocation} disabled={locating} aria-busy={locating}><span className="kc-icon-tile"><LocateFixed size={25} strokeWidth={1.5} className={locating ? "kc-loading" : undefined} /></span><strong>{locating ? "Getting location…" : "Use my current location"}</strong><span>Your browser will ask for permission. You can submit without a location.</span></button>}
+          {(locationError || errors.latitude || errors.longitude) && <p role="alert" className="kc-field-error">{locationError || errors.latitude || errors.longitude}</p>}
+        </section>
         <section className="kc-card form-section"><div className="form-section-title"><span>04</span><div><h2>Photographs of the damage</h2><p>Add 1–5 JPEG, PNG or WebP photos, up to 5 MiB each.</p></div><Camera size={21} /></div>
           <input ref={fileRef} id="photos" type="file" accept="image/jpeg,image/png,image/webp" multiple className="sr-only" tabIndex={-1} aria-label="Choose crop damage photos" onChange={(event) => { photoSelection(event.target.files); event.target.value = ""; }} />
           <button type="button" className="photo-picker" onClick={() => fileRef.current?.click()} disabled={photos.length >= 5}><span className="kc-icon-tile"><ImagePlus size={25} strokeWidth={1.5} /></span><strong>{photos.length >= 5 ? "All 5 photos added" : "Choose crop photographs"}</strong><span>Show the affected crop and surrounding field.</span></button>

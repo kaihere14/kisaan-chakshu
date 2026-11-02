@@ -20,7 +20,7 @@ Apply the additive `20261102020000_add_accounts` migration with `bun run migrati
 - `/signup`: creates a **farmer** account using name, email, and a 12–128 character password; emails are trimmed and lowercased. Public signup cannot set a role.
 - `/login`: shared farmer/officer login; the stored role determines the workspace.
 - `/farmer`: signed-in farmer's own claims, newest first, with 20 records per page and empty/error states.
-- `/farmer/submit`: the existing insurance fields, optional paired coordinates and description, and 1–5 JPEG/PNG/WebP photos up to 5 MiB each. Crop remains free text as in the backend contract.
+- `/farmer/submit`: the existing insurance fields, an optional field location captured from the device (browser Geolocation API, fresh high-accuracy reading, no manual coordinate entry; accuracy is shown but not sent), an optional description, and 1–5 JPEG/PNG/WebP photos up to 5 MiB each. Crop remains free text as in the backend contract.
 - `/farmer/claims/[id]`: saved details/photos, status, and policy-check reasons. Pending/queued/processing claims refresh every five seconds. A verified policy is displayed as awaiting future evidence analysis, never as insurance approval.
 - `/officer/dashboard`: officer-only access confirmation; no claim review operations yet.
 
