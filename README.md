@@ -8,7 +8,35 @@ The target is a **24-hour build by two developers**, using public weather data a
 
 This README consolidates the [shared planning conversation](https://chatgpt.com/share/6ae8516e-4084-83ec-a9dd-f38ff19f867c) and subsequent repository decisions. The latest direction supersedes the earlier 48-hour React/Vite and Python/FastAPI proposals: use **Next.js in `client/` and Node.js/Express in `server/`**, with TypeScript throughout.
 
-**Implemented:** the directory structure, empty placeholder files, and project/agent documentation. Application code, package manifests, configuration, database schema, seeds, and integrations are still unimplemented. There are no working install, run, or test commands yet.
+**Implemented locally:** an Express server with a health route/controller, TypeScript configuration, Bun-managed scripts, Prisma ORM 7, a complete insurance policy model, an initial versioned migration, a reproducible 150-policy Prisma seed, and an internal insurance verification controller/service with typed outcomes and runtime validation. Database access uses a PostgreSQL `DATABASE_URL`. Applying migrations and seeding your database require that URL. The client, claim intake, image/weather/integrity engines, and remaining business workflows are not implemented yet.
+
+### Server package commands
+
+Use Bun 1.3.14 for package management and Node.js 24 or later for the server runtime:
+
+```sh
+cd server
+bun install --frozen-lockfile
+bun run dev        # Watch src/server.ts using tsx
+bun run build      # Compile TypeScript using tsconfig.json
+bun run start      # Run the compiled dist/server.js with Node.js
+bun run typecheck  # Check TypeScript without emitting files
+bun run test       # Insurance validation/matching tests; no database connection needed
+bun run generate   # Generate the typed Prisma Client
+bun run seed:preview  # Preview all 150 synthetic policies; no database needed
+```
+
+Run `bun run generate` after installing dependencies or changing the Prisma schema. Build and typecheck also generate the client automatically. Run `bun run build` before `bun run start`; compiled JavaScript goes to `dist/`. Development uses `tsx watch`.
+
+The server uses `PORT` when set, otherwise `4000`. To override it, run `PORT=5001 bun run dev`. The shared `dotenv` loader explicitly reads `server/.env.local` and `server/.env` for both server startup and database scripts, including direct Node/tsx launches from another working directory. Nonempty shell variables take precedence, then `.env.local`, then `.env`; blank placeholders are skipped. Put credentials in the Git-ignored `server/.env.local`. The original `.env` placeholder was tracked; use the ignored `.env.local` for your connection URL.
+
+With the server running, check its health:
+
+```sh
+curl -i http://localhost:4000/api/health
+```
+
+Expected: HTTP `200` with JSON `{"status":"ok"}`. This endpoint confirms the HTTP server is responding; it does not check database or external-service connectivity. Health routing lives in `src/health/health.route.ts`, with the response in `src/health/health.controller.ts`.
 
 The six-stage workflow, synthetic insurance gate, team size, timeline, and application architecture are established direction. Detailed schemas, API payloads, scoring rules, providers, and screen designs remain subject to step-by-step approval. Recommendations below are planning baselines, not completed features or authorization to implement them.
 
@@ -55,9 +83,9 @@ Store claim → Insurance eligibility gate against synthetic policies
 
 ## Insurance verification and synthetic data
 
-Policies and claims are separate concepts: a policy is a seeded coverage record; a claim is a farmer's submission against it. The latest 24-hour plan recommends **20 synthetic policies**, plus sample prior claims for duplicate detection.
+Policies and claims are separate concepts: a policy is a seeded coverage record; a claim is a farmer's submission against it. The current seed generates **150 synthetic issued policies**, replacing the earlier 20-record proposal. Claims and duplicate-claim detection will be implemented separately.
 
-Proposed checks compare policy ID, farmer identity, policy/premium status, crop, plot, season, coverage dates, claimed event date, and covered peril. Duplicate submissions are checked against the same policy, plot, and incident. Keep policy validity distinct from incident eligibility: an active policy may still exclude the reported event.
+The internal insurance check compares policy number, farmer ID/name, policy/premium status, crop, plot, season/year, claimed event date, and covered peril. Duplicate-claim checks against the same policy, plot, and incident are deferred until claims exist. Policy validity is distinct from incident eligibility: an active policy may still exclude the reported event.
 
 | Situation | Planned outcome | Evidence pipeline |
 |---|---|---|
@@ -68,7 +96,131 @@ Proposed checks compare policy ID, farmer identity, policy/premium status, crop,
 
 A missing or mismatched record produces a correction or review state rather than an irreversible automated insurance rejection. Seeded identities and policies must be visibly fictional; no real Aadhaar, bank details, or insurer/government access is required.
 
-The proposed lookup method is **Policy/Application ID + Demo Farmer ID**, with further field matching. The exact matching and correction rules still need design approval.
+The implemented lookup uses **Policy Number + Demo Farmer ID**, followed by the approved field and coverage checks. Application-number lookup is not implemented.
+
+### Internal insurance controller contract
+
+Other server modules call `verifyInsurance(input)` from [`insurance.controller.ts`](server/src/insurance/insurance.controller.ts). This is an async server function, not an Express handler; no insurance HTTP route is registered. The caller passes claim details and awaits the result. Matching and Prisma access live in [`insurance.service.ts`](server/src/insurance/insurance.service.ts).
+
+[`InsuranceVerificationInput`](server/src/insurance/insurance.types.ts) requires `policy_number`, `owner_demo_id`, `owner_name`, `plot_id`, `crop`, `season`, numeric `season_year`, `peril`, and a real calendar `event_date` in `YYYY-MM-DD` format. Season/peril values reuse Prisma's generated enums. The controller validates input with Zod before database access, trims required text, and ignores unrelated submission fields.
+
+| Returned result | Meaning |
+|---|---|
+| `{ result: true, reason: "verified" }` | All fields match, policy is active, premium is paid, event date is inside coverage, and peril is covered |
+| `{ result: "partial", reason: "details_mismatch", mismatchedFields: [...] }` | Policy/farmer IDs match and coverage is eligible, but name, plot, crop, season, or season year differs |
+| `{ result: false, reason: "not_found" }` | No policy exists for that policy number |
+| `{ result: false, reason: "owner_mismatch" }` | Policy exists but the farmer ID differs |
+| `{ result: false, reason: "ineligible", issues: [...] }` | Policy inactive/expired/cancelled, premium unpaid/pending, event outside coverage, or uncovered peril |
+| `{ result: false, reason: "invalid_input", invalidFields: [...] }` | Required fields, enum values, year, or event date fail validation |
+
+Reason, field, and eligibility-issue values have exported TypeScript enums; `InsuranceVerificationResult` is a discriminated union. Eligibility issue codes are `policy_not_active`, `premium_not_paid`, `event_outside_coverage`, and `peril_not_covered`. Multiple issues/mismatches are returned together, without exposing stored policy values.
+
+Policy/farmer/plot identifiers match exactly after surrounding whitespace is trimmed. Farmer names and crop names ignore case and repeated whitespace. Coverage start/end dates are inclusive. Identity failures are evaluated first, then hard eligibility failures, then correctable detail mismatches. An eligibility failure therefore returns `false` even when some fields also need correction. These are demo policy rules, not official insurance decisions.
+
+Callers must check **`result === true`**, because the string `"partial"` is truthy:
+
+```ts
+const verification = await verifyInsurance(claimDetails);
+if (verification.result === true) {
+  // Eligible for the future evidence-processing pipeline.
+} else if (verification.result === "partial") {
+  // Request correction using verification.mismatchedFields.
+} else {
+  // Handle verification.reason and its typed issue/field details.
+}
+```
+
+Database/connection errors reject the promise and must be handled by the calling module; they are never converted into an insurance mismatch or rejection. This function only reads policies and returns a result; claim persistence, correction workflows, duplicate detection, and evidence processing remain separate steps.
+
+### Prisma database setup: generate → migrate → seed
+
+Prisma is the only database access/migration layer. The previous SDK configuration and manually applied `database/schema.sql` path have been removed. Use an empty PostgreSQL application database and put its connection URL in the existing Git-ignored **`server/.env.local`**:
+
+```dotenv
+DATABASE_URL="postgresql://USER:PASSWORD@HOST:5432/kisaan_chakshu?sslmode=require"
+```
+
+[`server/.env.example`](server/.env.example) documents the variable. Use the database password in the URL and URL-encode special characters. Use a direct or session-mode PostgreSQL connection that supports migrations. No separate API URL or API key is required.
+
+From `server/`, run:
+
+```sh
+bun install --frozen-lockfile
+bun run db:setup
+```
+
+`db:setup` runs these commands in order and stops if any step fails:
+
+```sh
+bun run generate           # Generate Prisma Client from schema.prisma
+bun run migration:deploy   # Apply checked-in SQL migrations, creating the policy table
+bun run seed               # Run the configured Prisma seed and verify 150 records
+```
+
+The initial migration is already checked in, so first-time setup does not require a shadow database or an interactive migration prompt. Prisma records applied migrations in `_prisma_migrations`. Repeating setup skips applied migrations and preserves existing seed records.
+
+Additional package scripts:
+
+| Command | Purpose |
+|---|---|
+| `bun run migration --name describe_change` | Create and apply a development migration after changing the model; requires shadow-database access |
+| `bun run migration:deploy` | Apply existing migrations to the configured database |
+| `bun run migration:status` | Inspect migration state |
+| `bun run generate` | Regenerate typed client code; no database connection needed |
+| `bun run seed` | Insert the 150 demo policies after migrations |
+| `bun run seed:preview` | Print demo records without connecting to a database |
+| `bun run studio` | Browse records in Prisma Studio |
+
+The source of truth is [`server/prisma/schema.prisma`](server/prisma/schema.prisma). [`server/prisma.config.ts`](server/prisma.config.ts) sets the connection, migration directory, and seed command. `src/config/prisma.ts` creates the PostgreSQL driver adapter and Prisma Client lazily, keeping health checks independent of database credentials. Generated code lives in `src/generated/prisma/` and is ignored by Git.
+
+The initial migration uses a transaction so failed DDL rolls back. Subsequent changes belong in new migrations rather than editing applied SQL. There is no automatic reset/drop command. If the earlier manual SQL was already applied to a database, preserve its data and baseline/migrate that existing schema separately before applying this fresh-database migration; do not reset it to resolve migration errors.
+
+The Prisma seed uses a transaction and `createMany({ skipDuplicates: true })`, then verifies the seed-batch count. Reruns preserve existing IDs and edits. Expected success on a new database: `Verified 150 synthetic policies (150 inserted). Existing policies were preserved.` A rerun reports zero inserted. A missing table produces an instruction to migrate first.
+
+### Policy fields
+
+Each policy currently includes the owner's details directly as the snapshot recorded when insurance was issued. A separate farmer account/owner table can be introduced when its workflow is designed.
+
+| Field group | Columns |
+|---|---|
+| Identification and issuer | `id` (UUID), `policy_number` (unique), `application_number` (unique), `insurer_name`, `scheme_name` |
+| Policy owner | `owner_demo_id`, `owner_name`, optional `owner_phone`, optional `owner_email`, `ownership_type` (owner/tenant/leaseholder) |
+| Land and location | `village`, `district`, `state`, `plot_id`, `plot_latitude`, `plot_longitude`, `insured_area_hectares` |
+| Crop and coverage | `crop`, `season`, `season_year`, `covered_perils`, `issued_on`, `coverage_start`, `coverage_end` |
+| Financial and policy status | `sum_insured_inr`, `premium_amount_inr`, `premium_status`, `policy_status` |
+| Provenance | `is_synthetic`, `seed_batch`, `created_at`, `updated_at` |
+
+Prisma models the policy, premium, ownership, season, and peril values as PostgreSQL enums; money, area, and coordinates use decimal types. The initial migration adds SQL checks for dates, ranges, nonempty coverage, and positive amounts. Row Level Security is enabled; the backend connects as the database/table owner. No browser database credentials or public policy API are exposed.
+
+### Reproducible demo records
+
+All identifiers, owners, insurers, and village/plot labels are fictional. Phone numbers are null; email addresses use the reserved `.invalid` domain. Plot coordinates are illustrative points near Ludhiana, Karnal, Kakinada, Kota, and Nashik, not authenticated parcel boundaries. Seeded crops are paddy, soybean, and maize; these data examples do not enable or validate their vision/weather support.
+
+| Policy suffix | Count | Status | Premium | Demo purpose |
+|---|---|---|---|---|
+| `0001`–`0090` | 90 | Active | Paid | Matching policy or deliberately mismatched input |
+| `0091`–`0105` | 15 | Active | Unpaid | Premium exception |
+| `0106`–`0125` | 20 | Expired | Paid | Historical coverage exception |
+| `0126`–`0140` | 15 | Cancelled | Paid | Cancelled policy exception |
+| `0141`–`0150` | 10 | Inactive | Pending | Inactive/pending exception |
+
+Policy numbers use `DEMO-KC-POL-` before the suffix. Use this known matching input with the internal insurance controller after seeding:
+
+```json
+{
+  "policy_number": "DEMO-KC-POL-0001",
+  "owner_demo_id": "DEMO-FARMER-0001",
+  "owner_name": "Demo Farmer 0001",
+  "plot_id": "DEMO-PLOT-0001",
+  "crop": "paddy",
+  "season": "kharif",
+  "season_year": 2026,
+  "peril": "flood",
+  "event_date": "2026-10-15"
+}
+```
+
+That policy covers flood/lodging from `2026-06-01` to `2026-11-30`. The sample returns `true` against unchanged seed data. Changing the peril to drought returns `false/ineligible`; changing the crop to wheat returns `partial`. The seed has fixed dates and status snapshots: use the documented event date rather than assuming coverage matches today's date. The fictional premium rate and insured values are demonstration amounts, not official insurance pricing.
 
 ## Ground, Sky, and Device evidence
 
@@ -108,7 +260,8 @@ The proposed officer views are policy exceptions, prioritized claims, and manual
 | UI | Tailwind CSS + shadcn/ui |
 | Server | Node.js + Express + TypeScript; feature-based modular monolith |
 | Validation | Zod |
-| Database / photo storage | Supabase PostgreSQL / Supabase Storage |
+| Database / ORM | PostgreSQL + Prisma ORM 7 and PostgreSQL driver adapter |
+| Photo storage | Provider to be selected |
 | Image analysis | Hosted vision API; specific provider/model to be selected |
 | Weather | Open-Meteo; endpoint/date-window selection to be designed |
 | Image integrity | Sharp + perceptual hashing proposed |
@@ -139,10 +292,16 @@ kisaan-chakshu/
 │       ├── lib/
 │       └── types/
 ├── server/
-│   ├── database/             # schema.sql and synthetic-policy seed.ts
+│   ├── prisma.config.ts
+│   ├── prisma/
+│   │   ├── schema.prisma
+│   │   ├── migrations/
+│   │   ├── seed.ts
+│   │   └── seed-data.ts
 │   └── src/
 │       ├── app.ts
 │       ├── server.ts
+│       ├── health/
 │       ├── insurance/
 │       ├── claim/
 │       ├── verification/
@@ -179,20 +338,19 @@ Internal service calls connect these modules; they do not need to call each othe
 
 ## Data and API planning baseline
 
-The chat proposed six main entities: `farmers`, `insurance_policies`, `claims`, `claim_evidence`, `verification_results`, and `review_actions`. Evidence includes stored image references and available location/time information. Results retain policy and witness outcomes, reasons, and provisional priority. Review actions retain the officer action, reason, and time. Exact columns, relationships, access policies, and migration/seed behavior require approval before SQL is written.
+The chat proposed six main entities: `farmers`, `insurance_policies`, `claims`, `claim_evidence`, `verification_results`, and `review_actions`. The current Prisma model/migration implements only `insurance_policies`, with owner details stored on each issued policy. The remaining entities and relationships will be designed later. Evidence is intended to include stored image references and available location/time information; results retain witness outcomes and reasons; review actions retain the action, reason, and time.
 
 Candidate API operations discussed in planning:
 
 | Operation | Proposed endpoint |
 |---|---|
 | Submit / retrieve claim | `POST /api/claims`, `GET /api/claims/:id` |
-| Policy verification | `POST /api/claims/:id/verify-policy` |
 | Farmer status / correction | `GET /api/claims/:id/status`, `PATCH /api/claims/:id/correction` |
 | Run or retry eligible analysis | `POST /api/claims/:id/analyze` |
 | Retrieve evidence | `GET /api/claims/:id/evidence` |
 | Officer queue / action | `GET /api/officer/claims`, `PATCH /api/officer/claims/:id` |
 
-These are proposed contracts, not implemented endpoints. Public routes, payloads, authorization, and whether verification runs automatically during intake must be settled in the relevant design step.
+These are proposed contracts, not implemented endpoints. Insurance verification itself remains an internal function called by claim/orchestration code. Public claim routes, payloads, authorization, and when intake invokes verification must be settled in the relevant design step.
 
 ## Proposed 24-hour delivery plan
 
@@ -234,7 +392,7 @@ Custom YOLO training and validated quantitative crop-loss estimates; full multi-
 
 - Initial crop, supported perils, demonstration region, and sample event/photo data.
 - Farmer/policy lookup, correction rules, role access, and authentication approach.
-- Final database schema, storage permissions, API contracts, and status transitions.
+- Remaining database tables/relationships, photo-storage permissions, API contracts, and status transitions.
 - Vision provider/model, structured result format, weather rules, and integrity checks.
 - Provisional priority logic, missing-evidence behavior, and report/screen design.
 - Processing/retry strategy, deployment host, and environment setup.
