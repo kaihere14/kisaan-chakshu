@@ -42,8 +42,9 @@ export default function HeroContent() {
         {/* Line 2: हर किसान के साथ (in Hindi, warm terracotta/gold) */}
         <motion.span
           {...blurIn(0.55, 1.0)}
-          className="block text-[clamp(36px,5.8vw,72px)] font-normal
-                     leading-[1.12] tracking-[-0.02em] mt-1 sm:mt-2 text-[#B65A35] italic"
+          lang="hi"
+          className="block font-hindi text-[clamp(36px,5.8vw,72px)] font-normal
+                     leading-[1.12] tracking-[-0.02em] mt-1 sm:mt-2 text-[#B65A35]"
         >
           हर किसान के साथ।
         </motion.span>

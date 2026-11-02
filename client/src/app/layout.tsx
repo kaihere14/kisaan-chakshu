@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Inter, Laila } from "next/font/google";
 import localFont from "next/font/local";
 import "./globals.css";
 import "./portal.css";
@@ -8,6 +8,15 @@ const inter = Inter({
   subsets: ["latin"],
   variable: "--font-sans",
   display: "swap",
+});
+
+/** Laila — Unicode Devanagari display face for the Hindi hero line. */
+const laila = Laila({
+  weight: "400",
+  subsets: ["devanagari"],
+  variable: "--font-hindi",
+  display: "swap",
+  fallback: ["Georgia", "Times New Roman", "serif"],
 });
 
 /**
@@ -43,7 +52,7 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className={`${inter.variable} ${instrumentSerif.variable}`}>
+    <html lang="en" className={`${inter.variable} ${instrumentSerif.variable} ${laila.variable}`}>
       <body className="antialiased">{children}</body>
     </html>
   );
