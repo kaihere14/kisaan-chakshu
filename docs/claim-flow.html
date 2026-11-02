@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kisaan Chakshu claim flow</title>
+<style>
+* { box-sizing: border-box; }
+html, body { margin: 0; color: var(--foreground); font-family: var(--font-sans, sans-serif); }
+main { width: 100%; }
+h2, h3, p, figure { margin: 0; }
+h2, h3, strong { font-weight: 500; }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-bottom: 16px; }
+.tag { display: inline-flex; gap: 6px; align-items: center; white-space: nowrap; font-family: var(--font-mono, monospace); font-size: 12px; }
+.tag::before { content: ''; width: 7px; height: 7px; border: 1px solid currentColor; border-radius: 50%; }
+.done .tag, .tag.done { color: var(--success); }
+.done .tag::before, .tag.done::before { background: currentColor; }
+.undone .tag, .tag.undone { color: var(--muted-foreground); }
+.foundation { padding-bottom: 12px; margin-bottom: 18px; border-bottom: 1px solid var(--border); }
+.foundation p { margin-top: 5px; }
+.note { color: var(--muted-foreground); font-size: 12px; line-height: 1.5; }
+.flow { display: flex; flex-direction: column; align-items: center; }
+.node { width: min(100%, 460px); border: 1px solid var(--border); border-radius: var(--radius, 8px); padding: 10px 14px; line-height: 1.4; }
+.node.undone { border-style: dashed; }
+.node.done { border-style: solid; }
+.node h3 { font-size: 14px; margin: 3px 0; }
+.node p { font-size: 12px; }
+.node .status { display: inline-block; font-family: var(--font-mono, monospace); color: var(--foreground); }
+.arrow { height: 23px; display: flex; align-items: center; justify-content: center; color: var(--muted-foreground); font-size: 17px; }
+.arrow.labelled { height: auto; min-height: 30px; gap: 8px; font-size: 12px; }
+.group { width: 100%; }
+.fork { height: 13px; width: 68%; margin: 0 auto; border: 1px solid var(--border); border-bottom: none; }
+.parallel { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; width: 100%; }
+.parallel .node { width: 100%; }
+.join { height: 13px; width: 68%; margin: 0 auto; border: 1px solid var(--border); border-top: none; }
+.outcomes { align-items: start; }
+.outcomes .node { min-height: 132px; }
+.outcomes .terminal { margin-top: 6px; color: var(--muted-foreground); }
+.source { width: min(100%, 460px); padding: 9px 0; margin-top: 6px; border-top: 2px solid var(--foreground); border-bottom: 2px solid var(--foreground); line-height: 1.5; }
+.source p { font-size: 12px; }
+.source strong { display: block; }
+.engine-title { text-align: center; font-size: 12px; margin-bottom: 7px; color: var(--muted-foreground); }
+.exceptions { border-top: 1px solid var(--border); margin-top: 20px; padding-top: 12px; }
+.exceptions h3 { font-size: 14px; margin-bottom: 8px; }
+.exceptions ul { margin: 0; padding-left: 18px; display: grid; gap: 5px; font-size: 12px; line-height: 1.5; }
+code { font-family: var(--font-mono, monospace); font-size: inherit; overflow-wrap: anywhere; }
+@media (max-width: 540px) {
+  .parallel { grid-template-columns: 1fr; gap: 8px; }
+  .fork, .join { width: 1px; border-left: 1px solid var(--border); border-right: none; }
+  .outcomes .node { min-height: 0; }
+  .outcomes .verified { order: 3; }
+  .parallel.engines { gap: 8px; }
+}
+</style>
+</head>
+<body>
+<main>
+  <div class="legend" aria-label="Implementation legend">
+    <span class="tag done">DONE · implemented</span>
+    <span class="tag undone">UNDONE · proposed work</span>
+  </div>
+  <section class="foundation" aria-label="Existing foundation">
+    <span class="tag done">DONE</span>
+    <p><strong>Express · Prisma · policy/claim models · migrations · 150-policy seed</strong></p>
+    <p class="note">Repository status. Claim-to-insurance flow tested with isolated PostgreSQL and real Redis; ImageKit upload/deletion smoke-tested live. Configure REDIS_HOST, REDIS_PORT and REDIS_PASSWORD to activate queue processing in your environment.</p>
+  </section>
+
+  <figure class="flow" aria-label="Claim data processing flow from farmer submission to human review. Claim API, uploads, outbox, BullMQ worker and insurance verification are implemented. Farmer UI, evidence engines, grading, report and officer workflow remain undone.">
+    <section class="node undone">
+      <span class="tag">UNDONE</span>
+      <h3>1. Farmer submits the claim form</h3>
+      <p>Policy + farmer + plot + crop + season + event date/peril + photos</p>
+    </section>
+    <div class="arrow" aria-hidden="true">↓</div>
+    <section class="node done">
+      <span class="tag">DONE</span>
+      <h3>2. Claim API validates the submission</h3>
+      <p><code>POST /api/claims</code> · multipart upload · deduplicate repeated requests</p>
+      <p class="note">Invalid form → return validation errors; do not enqueue.</p>
+    </section>
+    <div class="arrow" aria-hidden="true">↓</div>
+    <section class="node done">
+      <span class="tag">DONE</span>
+      <h3>3. Save the claim in PostgreSQL</h3>
+      <p>Submitted details + claim ID + timestamps · status: <span class="status">pending</span></p>
+    </section>
+    <div class="arrow" aria-hidden="true">↓</div>
+    <section class="node done">
+      <span class="tag">DONE</span>
+      <h3>4. Upload photos to ImageKit</h3>
+      <p>ImageKit stores the files; PostgreSQL stores each URL + fileId.</p>
+    </section>
+    <div class="arrow" aria-hidden="true">↓</div>
+    <section class="node done">
+      <span class="tag">DONE</span>
+      <h3>5. Save image references + durable outbox entry</h3>
+      <p>One database transaction records the images and request to enqueue.</p>
+    </section>
+    <div class="arrow" aria-hidden="true">↓</div>
+    <section class="node done">
+      <span class="tag">DONE</span>
+      <h3>6. Dispatcher adds a BullMQ job in Redis</h3>
+      <p>Payload: <code>{ claimId }</code> · persist status: <span class="status">queued</span></p>
+      <p class="note">Recoverable enqueue; a late acknowledgement must not overwrite processing.</p>
+    </section>
+    <div class="arrow" aria-hidden="true">↓</div>
+    <section class="node done">
+      <span class="tag">DONE</span>
+      <h3>7. Worker loads the claim from PostgreSQL</h3>
+      <p>Persist <span class="status">processing</span> + stage + attempt count; pass saved fields onward.</p>
+    </section>
+    <div class="arrow" aria-hidden="true">↓</div>
+    <section class="node done">
+      <span class="tag">DONE · function only</span>
+      <h3>8. Internal insurance verification</h3>
+      <p><code>verifyInsurance(details)</code> → controller validation → service → policy lookup</p>
+      <p class="note">Checks owner, policy, premium, crop, plot, season, event date and covered peril. Worker wiring is implemented.</p>
+    </section>
+    <div class="arrow labelled">↓ <span>Worker saves the returned result · DONE</span></div>
+    <div class="group">
+      <div class="fork" aria-hidden="true"></div>
+      <div class="parallel outcomes">
+        <section class="node done">
+          <span class="tag">DONE · routing</span>
+          <h3><code>result === false</code></h3>
+          <p>Status: <span class="status">needs_review</span></p>
+          <p class="terminal">Save reason; stop automated analysis. Officer review UI is UNDONE.</p>
+        </section>
+        <section class="node done verified">
+          <span class="tag">DONE · routing</span>
+          <h3><code>result === true</code></h3>
+          <p>Status: <span class="status">awaiting_analysis</span></p>
+          <p class="note">Current stopping point until the evidence engines exist.</p>
+        </section>
+        <section class="node done">
+          <span class="tag">DONE · routing</span>
+          <h3><code>result === "partial"</code></h3>
+          <p>Status: <span class="status">needs_correction</span></p>
+          <p class="terminal">Save mismatched fields. Correction/resubmission endpoint is UNDONE.</p>
+        </section>
+      </div>
+    </div>
+    <div class="arrow labelled">↓ <span>Verified claims only · future continuation</span></div>
+    <div class="group">
+      <p class="engine-title">9. Evidence processing · persist stage/results in the claim</p>
+      <div class="fork" aria-hidden="true"></div>
+      <div class="parallel engines">
+        <section class="node undone">
+          <span class="tag">UNDONE</span>
+          <h3>Ground · image analysis</h3>
+          <p>Load ImageKit evidence; record provisional damage findings.</p>
+        </section>
+        <section class="node undone">
+          <span class="tag">UNDONE</span>
+          <h3>Sky · weather checks</h3>
+          <p>Location/date measurements; corroborating or conflicting evidence.</p>
+        </section>
+        <section class="node undone">
+          <span class="tag">UNDONE</span>
+          <h3>Device · integrity checks</h3>
+          <p>GPS, timestamps, duplicate photos and evidence warnings.</p>
+        </section>
+      </div>
+      <div class="join" aria-hidden="true"></div>
+    </div>
+    <div class="arrow" aria-hidden="true">↓</div>
+    <section class="node undone">
+      <span class="tag">UNDONE</span>
+      <h3>10. Grade, prioritize and generate the report</h3>
+      <p>Save evidence, provisional priority, reasons and report reference.</p>
+      <p class="note">Unavailable evidence stays incomplete; never fabricate scores.</p>
+    </section>
+    <div class="arrow" aria-hidden="true">↓</div>
+    <section class="node undone">
+      <span class="tag">UNDONE</span>
+      <h3>11. Officer reviews the claim and evidence</h3>
+      <p>Persist <span class="status">ready_for_review</span> → review / request evidence / request a survey.</p>
+      <p class="note">Insurance approval and payments remain outside this MVP.</p>
+    </section>
+    <div class="arrow" aria-hidden="true">↓</div>
+    <section class="node undone">
+      <span class="tag">UNDONE</span>
+      <h3>12. Save officer action; update farmer tracking</h3>
+      <p>Persist review action, reason and final workflow status.</p>
+      <p class="note">Status API is DONE; farmer and officer interfaces are UNDONE.</p>
+    </section>
+    <div class="arrow" aria-hidden="true">↓</div>
+    <section class="source" aria-label="Authoritative claim state">
+      <span class="tag done">DONE · claim model and state updates</span>
+      <strong>Claim row = single source of truth</strong>
+      <p>Submission · status · stage · insurance result · evidence · priority · errors · timestamps</p>
+      <p class="note">Every worker transition writes here. ImageKit holds files; Redis coordinates work. Status screens read PostgreSQL.</p>
+    </section>
+  </figure>
+
+  <section class="exceptions" aria-label="Failure and recovery branches">
+    <h3>Failure and recovery paths <span class="tag done">DONE</span></h3>
+    <ul>
+      <li>Upload failure → save error and failed/recoverable state; clean up recorded partial uploads. Unrecorded orphans need a future folder audit.</li>
+      <li>Redis unavailable → retain the pending outbox entry; retry enqueue without losing the claim.</li>
+      <li>Worker or database error → retry with backoff; record attempts and errors; mark failed after exhaustion.</li>
+      <li>Repeated jobs or late events → guarded transitions preserve newer claim state.</li>
+    </ul>
+  </section>
+</main>
+</body>
+</html>

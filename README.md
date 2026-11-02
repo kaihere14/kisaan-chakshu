@@ -8,7 +8,7 @@ The target is a **24-hour build by two developers**, using public weather data a
 
 This README consolidates the [shared planning conversation](https://chatgpt.com/share/6ae8516e-4084-83ec-a9dd-f38ff19f867c) and subsequent repository decisions. The latest direction supersedes the earlier 48-hour React/Vite and Python/FastAPI proposals: use **Next.js in `client/` and Node.js/Express in `server/`**, with TypeScript throughout.
 
-**Implemented locally:** an Express server with a health route/controller, TypeScript configuration, Bun-managed scripts, Prisma ORM 7, a complete insurance policy model, an initial versioned migration, a reproducible 150-policy Prisma seed, and an internal insurance verification controller/service with typed outcomes and runtime validation. Database access uses a PostgreSQL `DATABASE_URL`. Applying migrations and seeding your database require that URL. The client, claim intake, image/weather/integrity engines, and remaining business workflows are not implemented yet.
+**Implemented locally:** an Express server with a health route/controller, TypeScript configuration, Bun-managed scripts, Prisma ORM 7, a complete insurance policy model, an initial versioned migration, a reproducible 150-policy Prisma seed, an internal insurance verification controller/service with typed outcomes, and a claim API with ImageKit uploads, a PostgreSQL outbox, and a BullMQ worker. Database access uses a PostgreSQL `DATABASE_URL`. Applying migrations and seeding your database require that URL. The client, image/weather/integrity engines, scoring, reports, and officer workflow remain unimplemented. The claim worker currently stops at insurance verification.
 
 ### Server package commands
 
@@ -21,7 +21,7 @@ bun run dev        # Watch src/server.ts using tsx
 bun run build      # Compile TypeScript using tsconfig.json
 bun run start      # Run the compiled dist/server.js with Node.js
 bun run typecheck  # Check TypeScript without emitting files
-bun run test       # Insurance validation/matching tests; no database connection needed
+bun run test       # Insurance/claim unit tests; optional integration test requires disposable services
 bun run generate   # Generate the typed Prisma Client
 bun run seed:preview  # Preview all 150 synthetic policies; no database needed
 ```
@@ -130,7 +130,92 @@ if (verification.result === true) {
 }
 ```
 
-Database/connection errors reject the promise and must be handled by the calling module; they are never converted into an insurance mismatch or rejection. This function only reads policies and returns a result; claim persistence, correction workflows, duplicate detection, and evidence processing remain separate steps.
+Database/connection errors reject the promise and must be handled by the calling module; they are never converted into an insurance mismatch or rejection. This function only reads policies and returns a result; claim persistence is handled by the claim service. Correction workflows, duplicate-incident detection, and evidence processing remain later steps.
+
+## Claim submission and queue processing
+
+The claim row in PostgreSQL is the source of truth for submitted data, workflow status, stage, attempt count, insurance result, errors, and timestamps. ImageKit holds photo files; `ClaimImage` holds their URLs/file IDs. BullMQ jobs contain only `{ claimId }` and load their inputs from the database.
+
+### Configure and run
+
+Fill the placeholders in `server/.env.local`:
+
+```dotenv
+DATABASE_URL="your-postgresql-connection-url"
+REDIS_HOST="your-redis-host"
+REDIS_PORT=6379
+REDIS_PASSWORD="your-redis-password"
+REDIS_USERNAME=
+REDIS_TLS=false
+IMAGEKIT_PRIVATE_KEY="your-imagekit-private-key"
+IMAGEKIT_URL_ENDPOINT="https://ik.imagekit.io/your-account"
+```
+
+Use the host and numeric port supplied by your Redis provider, with no URL protocol in `REDIS_HOST`. Set `REDIS_TLS=true` if the provider requires TLS, and set optional `REDIS_USERNAME` when it uses ACL authentication (often `default`). Leave `REDIS_PASSWORD` blank for a password-free local Redis. Both BullMQ producer and worker use the same validated connection options; producer calls fail fast while worker connections keep reconnecting. The private ImageKit key stays on the server; no public key is required for this upload flow. Then apply the new additive migration and run the API and worker in separate terminals, each from `server/`:
+
+```sh
+bun install --frozen-lockfile
+bun run generate
+bun run migration:deploy
+bun run dev
+```
+
+```sh
+bun run worker:dev
+```
+
+For compiled execution: `bun run build`, then run `bun run start` and `bun run worker:start` separately. Keep both processes running. The API can accept/store submissions while the worker or Redis is unavailable; they stay pending until dispatch resumes.
+
+### Submit and retrieve a claim
+
+`POST /api/claims` accepts **multipart/form-data** with the nine insurance fields shown in the demo example below, optional `latitude` + `longitude` (both or neither), optional `description` (up to 2,000 characters), and **1–5 photos** in the repeated `photos` field. JPEG, PNG and WebP are accepted; MIME declarations/signatures are checked and each file is limited to 5 MiB. Full image-content analysis belongs to the future vision/integrity stages.
+
+Send an `Idempotency-Key` header containing 8–128 letters, numbers, hyphens or underscores. Reuse the key when retrying the same request; sending different fields/photos with that key returns `409`. This prevents duplicate records/uploads for HTTP retries; it does not detect separate claims for the same crop incident.
+
+```sh
+curl http://localhost:4000/api/claims \
+  -H 'Idempotency-Key: demo-claim-00000001' \
+  -F 'policy_number=DEMO-KC-POL-0001' \
+  -F 'owner_demo_id=DEMO-FARMER-0001' \
+  -F 'owner_name=Demo Farmer 0001' \
+  -F 'plot_id=DEMO-PLOT-0001' \
+  -F 'crop=paddy' \
+  -F 'season=kharif' \
+  -F 'season_year=2026' \
+  -F 'peril=flood' \
+  -F 'event_date=2026-10-15' \
+  -F 'photos=@/absolute/path/to/damage.jpg'
+```
+
+A new submission returns `202` and `{ claim, replayed: false }`, with a `Location` header pointing to `/api/claims/<id>`. An identical replay returns `200` and the same claim, without uploading again. Query `GET /api/claims/<id>` for `{ claim }`; it reads PostgreSQL and never derives status from Redis. Internal idempotency hashes, processing tokens, and ImageKit deletion IDs are not exposed in the response.
+
+| Stored status | Meaning |
+|---|---|
+| `pending` | Claim saved; photos are uploading or an outbox entry is waiting for dispatch |
+| `queued` | BullMQ accepted the claim job |
+| `processing` | Worker is executing insurance verification |
+| `awaiting_analysis` | Insurance returned `true`; stop until the evidence engines are implemented |
+| `needs_correction` | Insurance returned `partial`; saved mismatched fields are available |
+| `needs_review` | Insurance returned `false`; saved verification reasons are available |
+| `failed` | Upload failed/expired, or queue processing exhausted retries |
+
+Stages distinguish `upload`, `dispatch`, `insurance`, `awaiting_analysis`, and `finished`. `finished_at` records completion/failure of the current worker/upload stage, not insurance approval or payout. No correction/resubmission endpoint or officer review UI has been implemented yet. Authentication and farmer ownership checks on these new HTTP routes are also pending.
+
+### Persistence, retries and recovery
+
+1. Validate fields and photos before creating anything. Reserve the idempotency key in a `pending` claim row.
+2. Upload photos into `/kisaan-chakshu/claims/<claimId>/` in ImageKit.
+3. In one Prisma transaction, save image references, mark the images ready, and insert a `ClaimOutbox` row. A claim can retain an invalid/missing policy number, so it deliberately has no mandatory policy foreign key.
+4. The worker process polls the outbox every two seconds, adds a BullMQ job whose ID is the claim UUID, and conditionally marks the claim queued. Enqueue failures retain an outbox entry with retry time/error; the HTTP server does not need a Redis connection.
+5. The worker loads saved fields, writes processing/attempt metadata, invokes the internal insurance function, and saves the result/status. Operational failures retry up to three attempts with exponential backoff. Business outcomes (`partial`/`false`) are saved without being retried as operational errors.
+6. Processing tokens fence stale worker writes; late dispatch acknowledgements cannot regress processing or terminal states. Retained BullMQ jobs deduplicate repeated delivery.
+7. Recovery checks queued/processing records older than 30 seconds. Missing Redis jobs are re-created through the outbox; exhausted/stalled failures become visible in the claim. Upload reservations older than 15 minutes become failed. Known partial uploads have database deletion receipts and are cleaned up with retries.
+
+Known boundary: ImageKit upload and PostgreSQL commit cannot be one transaction. Abrupt process death or an ambiguous commit can leave orphaned files in a claim's ImageKit folder before their IDs are persisted. Automatic folder reconciliation is not implemented; known recorded failures are cleaned up. Completed/failed BullMQ jobs are retained for deduplication and need an operational retention policy as usage grows.
+
+### Verification
+
+`bun run test` runs the unit tests. The integration test is opt-in: apply the migrations to a **disposable** PostgreSQL database, supply `CLAIM_TEST_DATABASE_URL`, `CLAIM_TEST_REDIS_HOST`, and `CLAIM_TEST_REDIS_PORT` for dedicated test services (plus `CLAIM_TEST_REDIS_PASSWORD`, `CLAIM_TEST_REDIS_USERNAME`, and `CLAIM_TEST_REDIS_TLS` when required), then run `bun run test`. It exercises the real Prisma/outbox/BullMQ path with simulated ImageKit uploads, and cleans up only its own records/jobs. Never point those test variables at a shared live queue. A live upload/deletion smoke check also passed with the configured ImageKit account; that test file was removed. New environments still need their own credentials and Redis configuration.
 
 ### Prisma database setup: generate → migrate → seed
 
@@ -261,14 +346,15 @@ The proposed officer views are policy exceptions, prioritized claims, and manual
 | Server | Node.js + Express + TypeScript; feature-based modular monolith |
 | Validation | Zod |
 | Database / ORM | PostgreSQL + Prisma ORM 7 and PostgreSQL driver adapter |
-| Photo storage | Provider to be selected |
+| Photo storage | ImageKit server upload SDK |
+| Queue | BullMQ + Redis; PostgreSQL outbox for recoverable dispatch |
 | Image analysis | Hosted vision API; specific provider/model to be selected |
 | Weather | Open-Meteo; endpoint/date-window selection to be designed |
 | Image integrity | Sharp + perceptual hashing proposed |
 | Scoring / reports | TypeScript rules + generated HTML |
 | Deployment | Vercel for the client proposed; Node.js host to be selected |
 
-The Express server owns orchestration and external integrations. A separate Python service, Redis, Celery, or distributed microservices are not needed for the planned MVP. Credentials, access controls, upload limits, processing/retry behavior, and deployment configuration must be designed before their respective implementation steps.
+The Express server owns orchestration and external integrations. BullMQ uses Redis for job delivery, with a separate worker process. A separate Python service, Celery, or distributed microservices are not needed for this MVP. Credentials, access controls, upload limits, processing/retry behavior, and deployment configuration must be designed before their respective implementation steps.
 
 ## Project structure
 
@@ -303,7 +389,7 @@ kisaan-chakshu/
 │       ├── server.ts
 │       ├── health/
 │       ├── insurance/
-│       ├── claim/
+│       ├── claim/            # API, service, BullMQ transport and worker
 │       ├── verification/
 │       ├── vision/
 │       ├── weather/
@@ -338,7 +424,7 @@ Internal service calls connect these modules; they do not need to call each othe
 
 ## Data and API planning baseline
 
-The chat proposed six main entities: `farmers`, `insurance_policies`, `claims`, `claim_evidence`, `verification_results`, and `review_actions`. The current Prisma model/migration implements only `insurance_policies`, with owner details stored on each issued policy. The remaining entities and relationships will be designed later. Evidence is intended to include stored image references and available location/time information; results retain witness outcomes and reasons; review actions retain the action, reason, and time.
+The chat proposed six main entities: `farmers`, `insurance_policies`, `claims`, `claim_evidence`, `verification_results`, and `review_actions`. Prisma now implements `insurance_policies`, `claims`, `claim_images`, and `claim_outbox`. Owner details remain on each issued policy. Insurance results currently live on the claim as JSON; review/history tables and evidence-engine results will be designed later. Evidence is intended to include stored image references and available location/time information; results retain witness outcomes and reasons; review actions retain the action, reason, and time.
 
 Candidate API operations discussed in planning:
 
@@ -350,7 +436,7 @@ Candidate API operations discussed in planning:
 | Retrieve evidence | `GET /api/claims/:id/evidence` |
 | Officer queue / action | `GET /api/officer/claims`, `PATCH /api/officer/claims/:id` |
 
-These are proposed contracts, not implemented endpoints. Insurance verification itself remains an internal function called by claim/orchestration code. Public claim routes, payloads, authorization, and when intake invokes verification must be settled in the relevant design step.
+`POST /api/claims` and `GET /api/claims/:id` are implemented as described above; the remaining routes in this table are proposals. Insurance verification itself remains an internal function called by claim/orchestration code. Public claim routes, payloads, authorization, and when intake invokes verification must be settled in the relevant design step.
 
 ## Proposed 24-hour delivery plan
 
