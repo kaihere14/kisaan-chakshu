@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="570" viewBox="0 0 1600 570" fill="none">
+<defs>
+ <linearGradient id="sky" x2="0" y2="1"><stop stop-color="#f9efdf"/><stop offset="1" stop-color="#f2dba6"/></linearGradient>
+ <linearGradient id="hill" x2="0" y2="1"><stop stop-color="#7c8a4c"/><stop offset="1" stop-color="#a7a66c"/></linearGradient>
+ <linearGradient id="field" x2="1" y2="1"><stop stop-color="#d9ac54"/><stop offset="1" stop-color="#e8ca7e"/></linearGradient>
+ <pattern id="grain" width="6" height="6" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r=".6" fill="#71572d" opacity=".13"/></pattern>
+ <g id="tree"><path d="M0 0v63m0-28-17-18m17 4 18-19" stroke="#5e6140" stroke-width="5"/><ellipse cx="-15" cy="-3" rx="28" ry="25" fill="#6f7d4b"/><ellipse cx="14" cy="-14" rx="31" ry="30" fill="#7e8c52"/><ellipse cx="-4" cy="-25" rx="24" ry="27" fill="#8b9658"/><ellipse cx="28" cy="4" rx="21" ry="22" fill="#77854b"/></g>
+ <g id="wheat" stroke="#997431" stroke-width="1.5"><path d="M0 0v55m0-30c-13-4-12-15-12-15C0 13 0 25 0 25Zm0-9S0 4 11 1c0 0 2 10-11 15Zm0 23s0-12 11-15c0 0 2 10-11 15Z"/></g>
+</defs>
+<path fill="url(#sky)" d="M0 0h1600v570H0z"/>
+<circle cx="1170" cy="157" r="86" fill="#e9b866" opacity=".42"/>
+<circle cx="1170" cy="157" r="105" stroke="#d7b775" stroke-opacity=".25"/>
+<g stroke="#b7b18b" stroke-width="2" opacity=".7"><path d="M340 115c8-8 14-8 22 0 8-8 14-8 22 0m770-50c7-7 12-7 19 0 7-7 12-7 19 0m-111 52c8-8 14-8 22 0 8-8 14-8 22 0"/></g>
+<path d="M0 309c170-75 244-84 426-45 227 48 289-60 470-37 195 25 257 15 428-34 112-32 208-4 276 18v359H0Z" fill="#bdbe94"/>
+<path d="M0 323c148 14 228-39 370-9 205 43 280 2 464-20 145-17 293 71 441 39 138-30 242-101 325-65v302H0Z" fill="url(#hill)"/>
+<path d="M0 352c228-15 375-24 583 39s282 54 464 20 357-61 553 0v159H0Z" fill="#d5b168"/>
+<path d="M0 444c307-105 517 6 704-6 241-16 307-95 526-70 173 20 254 63 370 81v121H0Z" fill="#b5ae6a"/>
+<path d="M0 570V428c215-4 356 69 586 84 343 22 583-177 1014-140v198Z" fill="url(#field)"/>
+<g stroke="#f7e3b0" stroke-width="3" opacity=".65"><path d="M681 570c297-67 450-163 919-170M825 570c277-78 451-138 775-138M998 570c245-76 431-111 602-103M1178 570c139-47 288-66 422-64M1381 570c94-25 155-24 219-23"/></g>
+<g stroke="#566943" stroke-width="2" opacity=".4"><path d="M0 337c195-8 333-9 510 39m-510-18c188-10 315 7 449 38m-449-16c163-8 297 14 376 35m449-85c181-30 210 36 340 17m-276-35c137-17 194 32 290 19"/></g>
+<path d="M574 570c95-39 203-70 196-106-8-42-143-80-143-100 0-23 56-28 105-34-88 0-142 12-133 36 8 22 127 63 124 93-3 27-138 68-237 111Z" fill="#eee0b8"/>
+<g transform="translate(1325 273)"><path d="M0 0h90v64H0Z" fill="#e3c694"/><path d="m-13 3 55-42 63 42Z" fill="#a3663e"/><path d="M34 28h20v36H34Z" fill="#6f633f"/><path d="M8 20h14v16H8zm60 0h14v16H68Z" fill="#776f4c"/><path d="M-5 64h106" stroke="#6d774b" stroke-width="3"/></g>
+<g transform="translate(1435 239) scale(.85)"><use href="#tree"/></g>
+<g transform="translate(1280 272) scale(.48)"><use href="#tree"/></g>
+<g transform="translate(270 272) scale(.67)"><use href="#tree"/></g>
+<g transform="translate(322 281) scale(.4)"><use href="#tree"/></g>
+<g transform="translate(100 266) scale(1.2)"><use href="#tree"/></g>
+<g transform="translate(17 304) scale(.8)"><use href="#tree"/></g>
+<g transform="translate(915 399)"><ellipse cx="4" cy="85" rx="27" ry="5" fill="#7d7945" opacity=".25"/><path d="m-4 47-7 36m18-36 10 36" stroke="#5e5b3e" stroke-width="7" stroke-linecap="round"/><path d="M-9 12h24l4 40h-32Z" fill="#f4e5c5"/><path d="M-9 21-24 42m39-21 17 16" stroke="#a57547" stroke-width="6" stroke-linecap="round"/><circle cy="3" r="10" fill="#ac7749"/><path d="M-16-2h32l-6-9H-8Z" fill="#b56e36"/><path d="m31 35 4 54" stroke="#715f39" stroke-width="3"/></g>
+<g fill="#516b3e"><path d="M0 570V478c37-19 69-14 78 14 27-34 67-12 65 15 47-21 91 8 86 63Z"/><path d="M1600 570v-88c-25-17-46-11-54 11-37-23-70 2-59 28-31-5-55 17-49 49Z"/></g>
+<g opacity=".75"><use href="#wheat" x="219" y="507"/><use href="#wheat" x="244" y="520"/><use href="#wheat" x="202" y="533"/><use href="#wheat" x="1370" y="517"/><use href="#wheat" x="1394" y="529"/></g>
+<path fill="url(#grain)" d="M0 0h1600v570H0z"/>
+</svg>

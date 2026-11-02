@@ -8,7 +8,7 @@ The target is a **24-hour build by two developers**, using public weather data a
 
 This README consolidates the [shared planning conversation](https://chatgpt.com/share/6ae8516e-4084-83ec-a9dd-f38ff19f867c) and subsequent repository decisions. The latest direction supersedes the earlier 48-hour React/Vite and Python/FastAPI proposals: use **Next.js in `client/` and Node.js/Express in `server/`**, with TypeScript throughout.
 
-**Implemented:** the directory structure, empty placeholder files, and project/agent documentation. Application code, package manifests, configuration, database schema, seeds, and integrations are still unimplemented. There are no working install, run, or test commands yet.
+**Implemented:** the directory structure, project/agent documentation, Next.js client foundation, the Landing Page Hero section with interactive preview, and the Problem section with animated paper piling illustration and sequential bottleneck breakdown. Farmer and officer application modules, Express backend services, database schema, seeds, and integrations remain unimplemented.
 
 The six-stage workflow, synthetic insurance gate, team size, timeline, and application architecture are established direction. Detailed schemas, API payloads, scoring rules, providers, and screen designs remain subject to step-by-step approval. Recommendations below are planning baselines, not completed features or authorization to implement them.
 
