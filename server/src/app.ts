@@ -2,10 +2,13 @@ import express from "express";
 import healthRouter from "./health/health.route.js";
 import { createClaimRouter } from "./claim/claim.route.js";
 import { errorMiddleware } from "./middleware/error.middleware.js";
+import { createAuthRouter } from "./auth/auth.route.js";
 
 const app = express();
 
-app.use(express.json());
+app.disable("x-powered-by");
+app.use(express.json({ limit: "16kb" }));
+app.use("/api/auth", createAuthRouter());
 app.use("/api/health", healthRouter);
 app.use("/api/claims", createClaimRouter());
 app.get("/", (req, res) => {

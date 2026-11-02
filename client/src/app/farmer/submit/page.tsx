@@ -1,2 +1,2 @@
-// Reserved route: claim submission is planned, not implemented.
-export { notFound as default } from "next/navigation";
+import ClaimForm from "@/components/farmer/ClaimForm";
+export default function SubmitPage() { return <ClaimForm />; }

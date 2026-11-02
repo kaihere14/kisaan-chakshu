@@ -132,28 +132,28 @@ export default function PaperStackIllustration({
             </p>
           </motion.div>
 
-          {/* Floating Tag 2: Processing Delay (Active on Problem #3 & #4) */}
+          {/* Floating Tag 2: Paper Backlog Alert (Active on Problem #1 "The Work Piles Up") */}
           <motion.div
             animate={{
-              scale: activeProblemIndex === 2 || activeProblemIndex === 3 ? 1.05 : 0.98,
+              scale: activeProblemIndex === 0 ? 1.05 : 0.98,
               boxShadow:
-                activeProblemIndex === 2 || activeProblemIndex === 3
+                activeProblemIndex === 0
                   ? "0 10px 25px -3px rgba(217, 154, 72, 0.35)"
                   : "0 4px 12px rgba(0, 0, 0, 0.05)",
             }}
             transition={{ duration: 0.3 }}
             className={`absolute right-1 sm:right-3 top-24 z-40 px-3 py-2 rounded-xl border backdrop-blur-md transition-all duration-300 ${
-              activeProblemIndex === 2 || activeProblemIndex === 3
+              activeProblemIndex === 0
                 ? "bg-[#D99A48] text-[#1B3B28] border-[#D99A48] font-medium ring-4 ring-[#D99A48]/20"
                 : "bg-white/90 text-[#1B3B28] border-[#1B3B28]/15"
             }`}
           >
             <div className="flex items-center gap-1.5 text-[10.5px] font-semibold">
               <Clock size={13} className="text-[#1B3B28]" />
-              <span>45+ Days In Backlog</span>
+              <span>1,420+ Files In Backlog</span>
             </div>
-            <p className="text-[9px] text-[#1B3B28]/70 mt-0.5">
-              3.5 hrs manual cross-check per file
+            <p className="text-[9px] text-[#1B3B28]/80 mt-0.5">
+              Manual paperwork piling up daily
             </p>
           </motion.div>
 

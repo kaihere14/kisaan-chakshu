@@ -61,8 +61,40 @@ enum ClaimStage {
   finished
 }
 
+enum UserRole {
+  farmer
+  officer
+}
+
+model User {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email         String    @unique
+  name          String
+  password_hash String
+  role          UserRole  @default(farmer)
+  created_at    DateTime  @default(now()) @db.Timestamptz(6)
+  sessions      Session[]
+  claims        Claim[]
+
+  @@map("users")
+}
+
+model Session {
+  token_hash String   @id @db.Char(64)
+  user_id    String   @db.Uuid
+  user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  expires_at DateTime @db.Timestamptz(6)
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([user_id])
+  @@index([expires_at])
+  @@map("sessions")
+}
+
 model Claim {
   id                    String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  account_id            String?      @db.Uuid
+  account               User?        @relation(fields: [account_id], references: [id], onDelete: Restrict)
   idempotency_key       String       @unique @db.VarChar(128)
   request_hash          String       @db.Char(64)
   policy_number         String
@@ -93,6 +125,7 @@ model Claim {
   outbox                ClaimOutbox?
 
   @@index([status, updated_at])
+  @@index([account_id, created_at, id])
   @@index([policy_number, plot_id, event_date])
   @@map("claims")
 }

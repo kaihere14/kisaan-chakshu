@@ -19,7 +19,7 @@ const RECOVERY_DELAY_MS = 30_000;
 
 function responseFor(claim: ClaimWithImages): ClaimResponse {
   const { idempotency_key: _key, request_hash: _hash, processing_token: _token,
-    images_ready: _ready, images, insurance_result, ...fields } = claim;
+    images_ready: _ready, account_id: _account, images, insurance_result, ...fields } = claim;
   return {
     ...fields,
     latitude: claim.latitude?.toString() ?? null,
@@ -80,6 +80,20 @@ export function createClaimService({ prisma, images, verify = verifyInsurance }:
     return responseFor(claim);
   }
 
+  async function getOwnedClaim(id: string, accountId: string): Promise<ClaimResponse> {
+    const claim = await prisma.claim.findFirst({ where: { id, account_id: accountId }, include: includeImages });
+    if (!claim) throw new HttpError(404, "claim_not_found", "Claim not found.");
+    return responseFor(claim);
+  }
+
+  async function listClaims(accountId: string, page: number) {
+    const claims = await prisma.claim.findMany({
+      where: { account_id: accountId }, include: includeImages,
+      orderBy: [{ created_at: "desc" }, { id: "desc" }], skip: (page - 1) * 20, take: 21,
+    });
+    return { claims: claims.slice(0, 20).map(responseFor), page, hasMore: claims.length > 20 };
+  }
+
   async function cleanupFailedImages(): Promise<void> {
     const pending = await prisma.claimImage.findMany({
       where: { cleanup_pending: true, deleted_at: null, claim: { status: "failed" } }, take: 10,
@@ -92,11 +106,14 @@ export function createClaimService({ prisma, images, verify = verifyInsurance }:
     }));
   }
 
-  async function submitClaim(input: ClaimSubmissionInput, files: ClaimUpload[], key: string) {
+  async function submitClaim(input: ClaimSubmissionInput, files: ClaimUpload[], requestKey: string, accountId: string) {
     validateClaimPhotos(files);
+    // Identical browser retry keys belonging to different accounts are independent.
+    const key = createHash("sha256").update(`${accountId}:${requestKey}`).digest("hex");
     const hash = requestHash(input, files);
     let existing = await prisma.claim.findUnique({ where: { idempotency_key: key }, include: includeImages });
     const replay = (claim: ClaimWithImages) => {
+      if (claim.account_id !== accountId) throw new HttpError(404, "claim_not_found", "Claim not found.");
       if (claim.request_hash !== hash) throw new HttpError(409, "idempotency_conflict", "This Idempotency-Key belongs to a different submission.");
       return { claim: responseFor(claim), replayed: true };
     };
@@ -106,7 +123,7 @@ export function createClaimService({ prisma, images, verify = verifyInsurance }:
     try {
       const claim = await prisma.claim.create({ data: {
         ...input, event_date: new Date(`${input.event_date}T00:00:00.000Z`),
-        idempotency_key: key, request_hash: hash,
+        idempotency_key: key, request_hash: hash, account_id: accountId,
       } });
       claimId = claim.id;
     } catch (error) {
@@ -253,7 +270,7 @@ export function createClaimService({ prisma, images, verify = verifyInsurance }:
     await cleanupFailedImages();
   }
 
-  return { submitClaim, getClaim, dispatchPending, processClaim, recoverClaims, cleanupFailedImages };
+  return { submitClaim, getClaim, getOwnedClaim, listClaims, dispatchPending, processClaim, recoverClaims, cleanupFailedImages };
 }
 
 export type ClaimService = ReturnType<typeof createClaimService>;

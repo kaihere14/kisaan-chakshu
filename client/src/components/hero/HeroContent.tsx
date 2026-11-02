@@ -5,7 +5,7 @@ import { ArrowRight, ChevronRight } from "lucide-react";
 import Link from "next/link";
 
 const ROUTES = {
-  startClaim: "/claims/new",
+  startClaim: "/farmer/submit",
   exploreProcess: "/#how-it-works",
 } as const;
 

@@ -19,5 +19,8 @@ export const claimSubmissionSchema = insuranceVerificationSchema.extend({
 
 export const idempotencyKeySchema = z.string().regex(/^[a-zA-Z0-9_-]{8,128}$/, "Idempotency-Key must contain 8–128 letters, numbers, hyphens or underscores.");
 export const claimIdSchema = z.uuid();
+export const claimListSchema = z.object({
+  page: z.coerce.number().int().min(1).max(100_000).default(1),
+}).strict();
 export const MAX_CLAIM_PHOTOS = 5;
 export const MAX_PHOTO_BYTES = 5 * 1024 * 1024;

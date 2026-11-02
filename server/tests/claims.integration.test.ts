@@ -16,6 +16,8 @@ import { errorMiddleware } from "../src/middleware/error.middleware.js";
 import { verifyInsuranceService } from "../src/insurance/insurance.service.js";
 import { InsuranceVerificationReason as Reason, type InsuranceVerificationInput, type InsuranceVerificationResult } from "../src/insurance/insurance.types.js";
 import type { ClaimJobData, ClaimResponse, ClaimSubmissionInput, ClaimUpload } from "../src/claim/claim.types.js";
+import { createAuthService } from "../src/auth/auth.service.js";
+import { hashPassword } from "../src/auth/password.js";
 
 // Only run against explicitly supplied, migrated disposable database/Redis instances.
 // No external ImageKit calls are made; its upload/deletion boundary is simulated.
@@ -31,6 +33,11 @@ test("claim API → PostgreSQL outbox → real BullMQ → insurance result", {
   const redisConfig = getRedisConfig(redisEnvironment);
   const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl! }) });
   const namespace = randomUUID();
+  const account = await prisma.user.create({ data: {
+    email: `${namespace}@example.invalid`, name: "Integration farmer", password_hash: await hashPassword("integration-passphrase"),
+  } });
+  const auth = createAuthService(prisma);
+  const { token } = await auth.login({ email: account.email, password: "integration-passphrase" });
   const sample = buildDemoPolicies()[0]!;
   const policy = await prisma.insurancePolicy.create({ data: {
     ...sample, policy_number: `TEST-${namespace}`, application_number: `APP-${namespace}`,
@@ -61,13 +68,16 @@ test("claim API → PostgreSQL outbox → real BullMQ → insurance result", {
       (number) => prisma.insurancePolicy.findUnique({ where: { policy_number: number } })),
   });
   const app = express();
-  app.use("/api/claims", createClaimRouter(service));
+  app.use("/api/claims", createClaimRouter(service, auth));
   app.use(errorMiddleware);
   const server = app.listen(0, "127.0.0.1");
   await once(server, "listening");
   const address = server.address();
   assert(address && typeof address !== "string");
   const base = `http://127.0.0.1:${address.port}/api/claims`;
+  const request = (path: string, options: RequestInit = {}) => fetch(path, {
+    ...options, headers: { Cookie: `kc_session=${token}`, "X-Requested-With": "KisaanChakshu", ...options.headers },
+  });
   const workerConnection = new Redis({ ...redisConfig, maxRetriesPerRequest: null });
   const worker = new Worker<ClaimJobData>(CLAIM_QUEUE_NAME,
     (job) => service.processClaim(job.data.claimId, job.attemptsMade + 1, job.opts.attempts ?? 3),
@@ -81,7 +91,7 @@ test("claim API → PostgreSQL outbox → real BullMQ → insurance result", {
     const form = new FormData();
     for (const [name, value] of Object.entries({ ...input, ...changes })) if (value !== undefined) form.set(name, String(value));
     for (let i = 0; i < count; i++) form.append("photos", new Blob([png], { type: "image/png" }), "damage.png");
-    const response = await fetch(base, { method: "POST", headers: { "Idempotency-Key": idempotencyKey }, body: form });
+    const response = await request(base, { method: "POST", headers: { "Idempotency-Key": idempotencyKey }, body: form });
     const body = await response.json() as { claim: ClaimResponse; claimId: string; replayed: boolean };
     const id = body.claim?.id ?? body.claimId;
     if (id && !claimIds.includes(id)) claimIds.push(id);
@@ -114,7 +124,7 @@ test("claim API → PostgreSQL outbox → real BullMQ → insurance result", {
       assert.equal((await submit({ crop: "wheat" }, requestKey)).response.status, 409);
       await service.dispatchPending(claimQueue);
       await waitFor(first.body.claim.id, "awaiting_analysis");
-      const saved = await fetch(`${base}/${first.body.claim.id}`).then((r) => r.json()) as { claim: ClaimResponse };
+      const saved = await request(`${base}/${first.body.claim.id}`).then((r) => r.json()) as { claim: ClaimResponse };
       assert.equal(saved.claim.insurance_result?.result, true);
       assert.equal(saved.claim.attempt_count, 1);
       await service.processClaim(first.body.claim.id, 2);
@@ -134,8 +144,8 @@ test("claim API → PostgreSQL outbox → real BullMQ → insurance result", {
     await t.test("invalid form and missing photos are rejected before creating a claim", async () => {
       assert.equal((await submit({ event_date: "2026-02-30" })).response.status, 400);
       assert.equal((await submit({}, key(), 0)).response.status, 400);
-      assert.equal((await fetch(`${base}/not-a-uuid`)).status, 400);
-      assert.equal((await fetch(`${base}/${randomUUID()}`)).status, 404);
+      assert.equal((await request(`${base}/not-a-uuid`)).status, 400);
+      assert.equal((await request(`${base}/${randomUUID()}`)).status, 404);
     });
 
     await t.test("upload failure persists failed state and cleanup receipts until deletion succeeds", async () => {
@@ -256,6 +266,7 @@ test("claim API → PostgreSQL outbox → real BullMQ → insurance result", {
     await prisma.claimOutbox.deleteMany({ where: { claim_id: { in: claimIds } } });
     await prisma.claimImage.deleteMany({ where: { claim_id: { in: claimIds } } });
     await prisma.claim.deleteMany({ where: { id: { in: claimIds } } });
+    await prisma.user.delete({ where: { id: account.id } });
     await prisma.insurancePolicy.delete({ where: { id: policy.id } });
     await prisma.$disconnect();
     for (const key of redisKeys) {

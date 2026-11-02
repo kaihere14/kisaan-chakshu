@@ -8,8 +8,36 @@ The target is a **24-hour build by two developers**, using public weather data a
 
 This README consolidates the [shared planning conversation](https://chatgpt.com/share/6ae8516e-4084-83ec-a9dd-f38ff19f867c) and subsequent repository decisions. The latest direction supersedes the earlier 48-hour React/Vite and Python/FastAPI proposals: use **Next.js in `client/` and Node.js/Express in `server/`**, with TypeScript throughout.
 
-**Implemented:** the directory structure, project/agent documentation, Next.js client foundation, the Landing Page Hero section with interactive preview, and the Problem section with animated paper piling illustration and sequential bottleneck breakdown. Farmer and officer application modules, Express backend services, database schema, seeds, and integrations remain unimplemented.
-**Implemented locally:** an Express server with a health route/controller, TypeScript configuration, Bun-managed scripts, Prisma ORM 7, a complete insurance policy model, an initial versioned migration, a reproducible 150-policy Prisma seed, an internal insurance verification controller/service with typed outcomes, and a claim API with ImageKit uploads, a PostgreSQL outbox, and a BullMQ worker. Database access uses a PostgreSQL `DATABASE_URL`. Applying migrations and seeding your database require that URL. The client, image/weather/integrity engines, scoring, reports, and officer workflow remain unimplemented. The claim worker currently stops at insurance verification.
+**Implemented:** the Next.js landing page; email/password signup and login; farmer claim history, photo submission, and claim detail/status screens; and role-aware farmer/officer workspace access. The farmer screens reuse the landing page's cream, forest green, gold, terracotta, and Instrument Serif theme. Officer access opens a clearly labeled placeholder; the officer review workflow is not implemented.
+**Implemented locally:** an Express server with health checks, Prisma ORM 7/PostgreSQL, 150 synthetic policies, typed insurance verification, account/session persistence, and an account-owned claim API with ImageKit uploads, a PostgreSQL outbox, and a BullMQ worker. Applying migrations and seeding require a configured `DATABASE_URL`. The worker stops after insurance verification. Image/weather/integrity engines, scoring, reports, corrections, and officer review remain planned.
+
+### Authentication and farmer portal
+
+Start Express on port 4000 and Next.js on port 3000. Next.js proxies `/api/*` to Express using the server-only `API_SERVER_URL` setting (default `http://127.0.0.1:4000`; see `client/.env.example`). Set `APP_ORIGIN` in `server/.env.local` to the exact browser origin, default `http://localhost:3000`. Restart the processes after configuration changes. Use HTTPS and `NODE_ENV=production` when deployed so session cookies are marked Secure.
+
+Apply the additive `20261102020000_add_accounts` migration with `bun run migration:deploy` from `server/` before using authentication. It adds users, hashed sessions, and an optional account foreign key on claims; it does not rewrite existing policy/claim data. Historical claims remain unassigned and cannot be acquired by entering a Demo Farmer ID. Any future assignment needs an explicitly reviewed account-to-claim mapping.
+
+- `/signup`: creates a **farmer** account using name, email, and a 12–128 character password; emails are trimmed and lowercased. Public signup cannot set a role.
+- `/login`: shared farmer/officer login; the stored role determines the workspace.
+- `/farmer`: signed-in farmer's own claims, newest first, with 20 records per page and empty/error states.
+- `/farmer/submit`: the existing insurance fields, optional paired coordinates and description, and 1–5 JPEG/PNG/WebP photos up to 5 MiB each. Crop remains free text as in the backend contract.
+- `/farmer/claims/[id]`: saved details/photos, status, and policy-check reasons. Pending/queued/processing claims refresh every five seconds. A verified policy is displayed as awaiting future evidence analysis, never as insurance approval.
+- `/officer/dashboard`: officer-only access confirmation; no claim review operations yet.
+
+Passwords use Node's salted scrypt. Seven-day opaque sessions are stored only as SHA-256 token hashes; browser cookies are HttpOnly and SameSite=Lax, and logout revokes the current session. Password hashes and session tokens are never returned in response JSON. Authentication endpoints have an in-process 15-minute rate limit (10 attempts per email, 50 per direct API source IP, shared across login/signup); limits reset on server restart and are not shared across multiple API instances. With the Next.js proxy, source-IP limits conservatively group proxied clients together. Browser workspace guards are backed by server session/role/ownership checks on every claim endpoint.
+
+Mutation requests require `X-Requested-With: KisaanChakshu`; browser `Origin`, when present, must match `APP_ORIGIN`. No cross-origin CORS access is enabled. Requests use the same-origin Next.js proxy and cookies, with no browser database/storage credentials. Email ownership verification, password reset, and sending email are not implemented; no email provider is required for this approved email/password MVP.
+
+| Auth operation | Endpoint | Body / response |
+|---|---|---|
+| Signup | `POST /api/auth/signup` | `{ name, email, password }` → `201 { user }` and session cookie |
+| Login | `POST /api/auth/login` | `{ email, password }` → `200 { user }` and session cookie |
+| Current account | `GET /api/auth/me` | `200 { user: { id, name, email, role } }`, or `401` |
+| Logout | `POST /api/auth/logout` | Revokes session, clears cookie, returns `204` |
+
+Provision officers from the server rather than exposing officer signup. Put temporary `OFFICER_EMAIL`, `OFFICER_NAME`, and `OFFICER_PASSWORD` values in Git-ignored `server/.env.local`, then run `bun run create-officer` from `server/`. The command creates an officer only if the email is unused; it never promotes an existing account. Remove the temporary password afterward. No officer account is seeded or automatically created.
+
+The signup identity is separate from the fictional policy owner. The farmer still enters the policy's `owner_name` and `owner_demo_id`; logging in does not establish real policy entitlement. Claim account ownership controls portal access, while the existing synthetic insurance gate checks submitted policy details.
 
 ### Server package commands
 
@@ -24,6 +52,7 @@ bun run start      # Run the compiled dist/server.js with Node.js
 bun run typecheck  # Check TypeScript without emitting files
 bun run test       # Insurance/claim unit tests; optional integration test requires disposable services
 bun run generate   # Generate the typed Prisma Client
+bun run create-officer  # Provision an officer from temporary local environment values
 bun run seed:preview  # Preview all 150 synthetic policies; no database needed
 ```
 
@@ -169,12 +198,20 @@ For compiled execution: `bun run build`, then run `bun run start` and `bun run w
 
 ### Submit and retrieve a claim
 
+All `/api/claims` endpoints require a signed-in **farmer** session. New records belong to that account; clients cannot choose or transfer account ownership. Another farmer's claim and an unassigned historical claim both return `404`; officers receive `403` on these farmer routes.
+
+`GET /api/claims?page=1` returns `{ claims, page, hasMore }` for the signed-in account, ordered by creation date and UUID descending, 20 at a time. `page` must be an integer from 1 to 100,000. Unknown query parameters, including attempted owner filters, are rejected. Account IDs and internal processing/idempotency fields are omitted from claim JSON. Claim and auth responses use `Cache-Control: no-store`.
+
+Idempotency keys are scoped to the authenticated account. The browser preserves the same fields, files, and key on ambiguous/network failures; validation failures allow edits. Keep the page open for those retries: refreshing/navigating away does not preserve the pending upload/key. For the curl example below, first log in through `/api/auth/login` with the mutation header and save the session cookie in a local cookie jar. Keep cookie jars outside version control; the example uses `/tmp/kc-cookies.txt` on a Unix-like shell. The portal handles cookies automatically.
+
 `POST /api/claims` accepts **multipart/form-data** with the nine insurance fields shown in the demo example below, optional `latitude` + `longitude` (both or neither), optional `description` (up to 2,000 characters), and **1–5 photos** in the repeated `photos` field. JPEG, PNG and WebP are accepted; MIME declarations/signatures are checked and each file is limited to 5 MiB. Full image-content analysis belongs to the future vision/integrity stages.
 
 Send an `Idempotency-Key` header containing 8–128 letters, numbers, hyphens or underscores. Reuse the key when retrying the same request; sending different fields/photos with that key returns `409`. This prevents duplicate records/uploads for HTTP retries; it does not detect separate claims for the same crop incident.
 
 ```sh
 curl http://localhost:4000/api/claims \
+  -b /tmp/kc-cookies.txt \
+  -H 'X-Requested-With: KisaanChakshu' \
   -H 'Idempotency-Key: demo-claim-00000001' \
   -F 'policy_number=DEMO-KC-POL-0001' \
   -F 'owner_demo_id=DEMO-FARMER-0001' \
@@ -200,7 +237,7 @@ A new submission returns `202` and `{ claim, replayed: false }`, with a `Locatio
 | `needs_review` | Insurance returned `false`; saved verification reasons are available |
 | `failed` | Upload failed/expired, or queue processing exhausted retries |
 
-Stages distinguish `upload`, `dispatch`, `insurance`, `awaiting_analysis`, and `finished`. `finished_at` records completion/failure of the current worker/upload stage, not insurance approval or payout. No correction/resubmission endpoint or officer review UI has been implemented yet. Authentication and farmer ownership checks on these new HTTP routes are also pending.
+Stages distinguish `upload`, `dispatch`, `insurance`, `awaiting_analysis`, and `finished`. `finished_at` records completion/failure of the current worker/upload stage, not insurance approval or payout. No correction/resubmission endpoint or officer review UI has been implemented yet. Authentication and farmer ownership checks are enforced on all claim HTTP routes; worker/internal service reads remain independent of browser sessions.
 
 ### Persistence, retries and recovery
 
@@ -215,6 +252,8 @@ Stages distinguish `upload`, `dispatch`, `insurance`, `awaiting_analysis`, and `
 Known boundary: ImageKit upload and PostgreSQL commit cannot be one transaction. Abrupt process death or an ambiguous commit can leave orphaned files in a claim's ImageKit folder before their IDs are persisted. Automatic folder reconciliation is not implemented; known recorded failures are cleaned up. Completed/failed BullMQ jobs are retained for deduplication and need an operational retention policy as usage grows.
 
 ### Verification
+
+The authentication/farmer implementation passed client typecheck/production build, server typecheck/build, and Prisma schema validation. The Node test suite finished with **51 passes, 0 failures, and 1 skipped integration test**. It covers real HTTP auth middleware/controllers with an in-memory persistence boundary, password hashing, session expiry/revocation, role enforcement, mutation origin checks, rate limiting, ownership filtering, and account-scoped idempotency. Desktop (1440px) and mobile (390px) browser checks used simulated API responses to exercise signup, protected redirects, history/empty states, photo validation/preview, multipart retry, policy mismatch display, logout, and officer routing, with no runtime exceptions or page overflow. A real Next.js → compiled Express proxy smoke check returned `200` for health and `401` for unauthenticated account/history access. These checks do not verify live PostgreSQL, ImageKit, or Redis. This workspace has no server database URL or dedicated integration services, so the new migration was not applied and the opt-in database/queue test was skipped.
 
 `bun run test` runs the unit tests. The integration test is opt-in: apply the migrations to a **disposable** PostgreSQL database, supply `CLAIM_TEST_DATABASE_URL`, `CLAIM_TEST_REDIS_HOST`, and `CLAIM_TEST_REDIS_PORT` for dedicated test services (plus `CLAIM_TEST_REDIS_PASSWORD`, `CLAIM_TEST_REDIS_USERNAME`, and `CLAIM_TEST_REDIS_TLS` when required), then run `bun run test`. It exercises the real Prisma/outbox/BullMQ path with simulated ImageKit uploads, and cleans up only its own records/jobs. Never point those test variables at a shared live queue. A live upload/deletion smoke check also passed with the configured ImageKit account; that test file was removed. New environments still need their own credentials and Redis configuration.
 
@@ -437,7 +476,7 @@ Candidate API operations discussed in planning:
 | Retrieve evidence | `GET /api/claims/:id/evidence` |
 | Officer queue / action | `GET /api/officer/claims`, `PATCH /api/officer/claims/:id` |
 
-`POST /api/claims` and `GET /api/claims/:id` are implemented as described above; the remaining routes in this table are proposals. Insurance verification itself remains an internal function called by claim/orchestration code. Public claim routes, payloads, authorization, and when intake invokes verification must be settled in the relevant design step.
+`POST /api/claims`, `GET /api/claims/:id`, and account-owned history at `GET /api/claims?page=1` are implemented as described above; the remaining routes in this table are proposals. Insurance verification remains an internal function called by the claim worker. Farmer authorization is enforced on all claim HTTP routes.
 
 ## Proposed 24-hour delivery plan
 

@@ -16,6 +16,7 @@
     "typecheck": "prisma generate && tsc --project tsconfig.scripts.json --noEmit",
     "test": "prisma generate && node --import tsx --test tests/*.test.ts",
     "generate": "prisma generate",
+    "create-officer": "tsx scripts/create-officer.ts",
     "migration": "prisma migrate dev",
     "migration:deploy": "prisma migrate deploy",
     "migration:status": "prisma migrate status",

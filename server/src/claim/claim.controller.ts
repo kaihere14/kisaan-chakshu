@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 import { basename } from "node:path";
-import { claimIdSchema, claimSubmissionSchema, idempotencyKeySchema } from "./claim.schema.js";
+import { claimIdSchema, claimListSchema, claimSubmissionSchema, idempotencyKeySchema } from "./claim.schema.js";
+import { authenticatedUser } from "../auth/auth.middleware.js";
 import { getClaimService, type ClaimService } from "./claim.service.js";
 
 export function createClaimController(service?: ClaimService) {
@@ -13,12 +14,16 @@ export function createClaimController(service?: ClaimService) {
         fileName: basename(file.originalname).replace(/[^a-zA-Z0-9._-]/g, "_").slice(-100) || "photo",
         mimeType: file.mimetype,
       }));
-      const result = await (service ?? getClaimService()).submitClaim(input, files, key);
+      const result = await (service ?? getClaimService()).submitClaim(input, files, key, authenticatedUser(request).id);
       response.status(result.replayed ? 200 : 202).location(`/api/claims/${result.claim.id}`).json(result);
     },
     async get(request: Request, response: Response): Promise<void> {
       const id = claimIdSchema.parse(request.params.id);
-      response.json({ claim: await (service ?? getClaimService()).getClaim(id) });
+      response.json({ claim: await (service ?? getClaimService()).getOwnedClaim(id, authenticatedUser(request).id) });
+    },
+    async list(request: Request, response: Response): Promise<void> {
+      const { page } = claimListSchema.parse(request.query);
+      response.json(await (service ?? getClaimService()).listClaims(authenticatedUser(request).id, page));
     },
   };
 }

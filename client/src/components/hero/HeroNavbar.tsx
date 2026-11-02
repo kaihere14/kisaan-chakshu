@@ -111,7 +111,7 @@ export default function HeroNavbar() {
             <span className="w-px h-4 bg-[#1B3B28]/15 mx-1" />
 
             <Link
-              href="/claims/new"
+              href="/farmer"
               className="inline-flex items-center gap-2 px-4 py-2
                          bg-[#1B3B28] text-[#FAF3E5] text-[12.5px] font-semibold
                          rounded-xl
@@ -120,7 +120,7 @@ export default function HeroNavbar() {
                          shadow-[0_2px_8px_rgba(27,59,40,0.18)]
                          transition-all duration-200"
             >
-              Get Started
+              My claims
               <ArrowUpRight size={13} strokeWidth={2.2} />
             </Link>
           </div>
@@ -171,11 +171,11 @@ export default function HeroNavbar() {
                   </button>
 
                   <Link
-                    href="/claims/new"
+                    href="/farmer"
                     onClick={() => setMenuOpen(false)}
                     className="flex items-center justify-center gap-2 px-5 py-2.5 bg-[#1B3B28] text-white text-[13px] font-semibold rounded-xl"
                   >
-                    Get Started
+                    My claims
                     <ArrowUpRight size={13} strokeWidth={2.2} />
                   </Link>
                 </div>

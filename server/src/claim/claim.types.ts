@@ -31,7 +31,7 @@ export interface ClaimQueueTransport {
 
 export type ClaimWithImages = Claim & { images: ClaimImage[] };
 export type ClaimResponse = Omit<Claim,
-  | "idempotency_key" | "request_hash" | "processing_token" | "images_ready"
+  | "idempotency_key" | "request_hash" | "processing_token" | "images_ready" | "account_id"
   | "latitude" | "longitude" | "event_date" | "created_at" | "updated_at"
   | "queued_at" | "processing_started_at" | "finished_at" | "insurance_result"
 > & {

@@ -88,27 +88,6 @@ export default function ProblemSection() {
               activeProblemIndex={activeProblemIndex}
               onSelectProblem={handleSelectProblem}
             />
-
-            {/* Micro stats banner beneath illustration */}
-            <div className="mt-4 grid grid-cols-2 gap-3">
-              <div className="bg-white/70 backdrop-blur-sm p-3.5 rounded-2xl border border-[#1B3B28]/10 text-center">
-                <span className="block text-[22px] sm:text-[24px] font-bold font-serif text-[#B65A35]">
-                  45–90
-                </span>
-                <span className="block text-[11.5px] text-[#1B3B28]/70 font-medium leading-tight mt-0.5">
-                  Days average manual wait
-                </span>
-              </div>
-
-              <div className="bg-white/70 backdrop-blur-sm p-3.5 rounded-2xl border border-[#1B3B28]/10 text-center">
-                <span className="block text-[22px] sm:text-[24px] font-bold font-serif text-[#1B3B28]">
-                  0 / 100
-                </span>
-                <span className="block text-[11.5px] text-[#1B3B28]/70 font-medium leading-tight mt-0.5">
-                  Automated triage score
-                </span>
-              </div>
-            </div>
           </div>
         </div>
       </div>
